@@ -120,19 +120,39 @@ impl ZellijPlugin for State {
         let capabilities = self.mode_info.capabilities;
         let background = palette.text_unselected.background;
 
-        // Build a fully-styled ribbon for every tab.
-        let mut parts: Vec<LinePart> = Vec::with_capacity(self.tabs.len());
-        let mut is_alternate_tab = false;
-        for t in &self.tabs {
-            let mut tabname = t.name.clone();
-            if t.active && self.mode_info.mode == InputMode::RenameTab && tabname.is_empty() {
-                tabname = String::from("Enter name...");
-            }
-            parts.push(tab_style(tabname, t, is_alternate_tab, palette, capabilities));
-            is_alternate_tab = !is_alternate_tab;
-        }
+        // Tabs are shaded by the row they land on, so two stacked rows of ribbons
+        // don't fuse into one block. Which row a tab lands on isn't known until
+        // it's packed, and shading doesn't affect width, so: measure, assign
+        // rows, then style for real.
+        let measured: Vec<LinePart> = self
+            .tabs
+            .iter()
+            .map(|t| tab_style(self.tab_name(t), t, false, palette, capabilities))
+            .collect();
 
         let prefix = self.prefix(palette, cols);
+        let prefix_width: usize = prefix.iter().map(|p| p.len).sum();
+        let placement = assign_rows(&measured, prefix_width, cols, rows);
+        // With arrow fonts the arrows separate tabs horizontally, so shading only
+        // has to mark the row boundary. Without them nothing separates tabs, so
+        // fall back to a checkerboard that alternates along the row as well.
+        let arrow_fonts_available = !capabilities.arrow_fonts;
+
+        let parts: Vec<LinePart> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let (row, col) = placement.get(i).copied().unwrap_or((0, 0));
+                let shaded = if arrow_fonts_available {
+                    row % 2 == 1
+                } else {
+                    (row + col) % 2 == 1
+                };
+                tab_style(self.tab_name(t), t, shaded, palette, capabilities)
+            })
+            .collect();
+
         let laid_out = self.layout_rows(parts, prefix, rows, cols, palette, capabilities);
 
         let bg = background_fill(&background);
@@ -152,6 +172,16 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    // The label for a tab, including the placeholder shown while renaming.
+    fn tab_name(&self, t: &TabInfo) -> String {
+        let name = t.name.clone();
+        if t.active && self.mode_info.mode == InputMode::RenameTab && name.is_empty() {
+            String::from("Enter name...")
+        } else {
+            name
+        }
+    }
+
     // Optional leading "(session)" label on the first row. Returns empty when
     // hidden, unset, or it wouldn't fit.
     fn prefix(&self, palette: Styling, cols: usize) -> Vec<LinePart> {
@@ -275,6 +305,32 @@ impl State {
         }
         None
     }
+}
+
+// Where each tab lands: (row, position within that row), mirroring the wrap
+// rule in `layout_rows`. Tabs past the row budget all report the last row;
+// they're hidden behind the overflow marker, so their shading is never seen.
+fn assign_rows(
+    parts: &[LinePart],
+    prefix_width: usize,
+    cols: usize,
+    max_rows: usize,
+) -> Vec<(usize, usize)> {
+    let mut out = Vec::with_capacity(parts.len());
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let mut cur_width = prefix_width;
+    for part in parts {
+        if cur_width + part.len > cols && cur_width > 0 && row + 1 < max_rows {
+            row += 1;
+            col = 0;
+            cur_width = 0;
+        }
+        out.push((row, col));
+        col += 1;
+        cur_width += part.len;
+    }
+    out
 }
 
 fn background_fill(color: &PaletteColor) -> String {

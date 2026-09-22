@@ -102,7 +102,7 @@ pub fn render_tab(
 pub fn tab_style(
     mut tabname: String,
     tab: &TabInfo,
-    mut is_alternate_tab: bool,
+    is_alternate_tab: bool,
     palette: Styling,
     capabilities: PluginCapabilities,
 ) -> LinePart {
@@ -116,10 +116,9 @@ pub fn tab_style(
     if tab.has_bell_notification || tab.is_flashing_bell {
         tabname.push_str(" [!]");
     }
-    // we only color alternate tabs differently if we can't use the arrow fonts to separate them
-    if !capabilities.arrow_fonts {
-        is_alternate_tab = false;
-    }
+    // Shading is driven by row (see `assign_rows`) so stacked rows stay distinct,
+    // so unlike the stock bar we keep it even when arrow fonts are available —
+    // arrows separate tabs horizontally but do nothing for a row boundary.
 
     render_tab(tabname, tab, is_alternate_tab, palette, separator)
 }
