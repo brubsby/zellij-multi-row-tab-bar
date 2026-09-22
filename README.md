@@ -93,8 +93,23 @@ You reserve a fixed number of rows (`size=N`) and the plugin packs tabs into up 
 tabs exceed `N`. Set `N` to the most rows you ever want.
 
 True auto-height — the bar growing and shrinking the space it reserves as tabs come
-and go — is not implemented. It may well be possible: `zellij-tile` exposes
-`resize_pane_with_id(ResizeStrategy, PaneId)` (since 0.44), and a plugin can address
-its own pane via `PaneId::Plugin(get_plugin_ids().plugin_id)`. What is untested is
-whether the layout engine honors a resize against a tiled, non-selectable pane whose
-height was pinned by `size=N` in the layout. That's the experiment to run.
+and go — **is not possible** on zellij 0.44/0.45. This was measured, not assumed; see
+the `auto-height` branch for the spike.
+
+`zellij-tile` does expose `resize_pane_with_id(ResizeStrategy, PaneId)` (since 0.44),
+and a plugin can address its own pane via `PaneId::Plugin(get_plugin_ids().plugin_id)`.
+Two things block it:
+
+1. **A pane pinned with `size=N` in the layout ignores the resize entirely.** The
+   command is accepted and silently dropped — `resize_pane_with_id` fires a
+   `ScreenInstruction` whose result is discarded, so the plugin gets no error. In
+   testing, 28 resize commands left the height at 2.
+2. **Unpin it and you hit a floor of 5 rows.** Without `size=N` the resize *is*
+   honored — the bar walked 19 → 17 → 15 → 13 → 11 → 10 → 8 → 6 rows — but
+   `can_reduce_pane_height` refuses any step that would leave a pane below
+   `MIN_TERMINAL_HEIGHT` (5), and steps are `RESIZE_PERCENT` (5% of the viewport),
+   not single rows.
+
+A tab bar wants 1–3 rows. Pinned, it can't move; unpinned, it can't get under ~6.
+Auto-height needs either a resize-to-exact-size plugin command or an exemption from
+`MIN_TERMINAL_HEIGHT` for non-selectable panes.
