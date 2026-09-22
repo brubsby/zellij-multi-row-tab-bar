@@ -1,0 +1,20 @@
+[package]
+name = "multi-row-tab-bar"
+version = "0.1.0"
+edition = "2021"
+description = "A zellij tab-bar plugin that wraps tabs across multiple rows"
+license = "MIT"
+
+[dependencies]
+# Pinned to match the installed zellij host (0.44.0) exactly — a newer plugin
+# on an older host can hit plugin-protocol ABI mismatches.
+zellij-tile = "=0.44.0"
+zellij-tile-utils = "=0.44.0"
+ansi_term = "0.12"
+unicode-width = "0.1"
+
+[profile.release]
+# Plugins ship as wasm; optimize for size and strip to keep the artifact small.
+lto = true
+opt-level = "z"
+strip = true
