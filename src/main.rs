@@ -10,7 +10,7 @@ use zellij_tile_utils::style;
 use crate::tab::{more_message, tab_separator, tab_style};
 
 // Powerline arrow glyph used as the tab separator (matches the stock tab-bar).
-pub static ARROW_SEPARATOR: &str = "";
+pub static ARROW_SEPARATOR: &str = "\u{E0B0}";
 
 #[derive(Debug, Default, Clone)]
 pub struct LinePart {
