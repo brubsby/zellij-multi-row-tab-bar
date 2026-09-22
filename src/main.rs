@@ -36,6 +36,11 @@ struct State {
     // tab currently under the cursor. Indexed by row (pane-relative line).
     click_map: Vec<Vec<ClickRegion>>,
     hide_session_name: bool,
+    // Our own pane, so we can ask the layout engine to resize us (auto-height).
+    own_pane_id: Option<PaneId>,
+    // The last (current_rows, needed_rows) we issued a resize for, so a resize
+    // that the layout engine refuses doesn't get re-issued on every render.
+    last_resize: Option<(usize, usize)>,
 }
 
 register_plugin!(State);
@@ -51,6 +56,7 @@ impl ZellijPlugin for State {
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
         ]);
+        self.own_pane_id = Some(PaneId::Plugin(get_plugin_ids().plugin_id));
         set_selectable(false);
         subscribe(&[
             EventType::TabUpdate,
@@ -133,6 +139,12 @@ impl ZellijPlugin for State {
         }
 
         let prefix = self.prefix(palette, cols);
+
+        // Auto-height: ask to be exactly as tall as the tabs need.
+        let prefix_width: usize = prefix.iter().map(|p| p.len).sum();
+        let needed = rows_needed(&parts, prefix_width, cols);
+        self.request_height(needed, rows);
+
         let laid_out = self.layout_rows(parts, prefix, rows, cols, palette, capabilities);
 
         let bg = background_fill(&background);
@@ -262,6 +274,33 @@ impl State {
         rows
     }
 
+    // Ask the layout engine to grow/shrink our pane toward `needed` rows.
+    //
+    // Tiled resizes are percentage-stepped (zellij's RESIZE_PERCENT), not
+    // per-row, so one call may over- or undershoot; each resize triggers a
+    // fresh render, which nudges again until we land. Re-issuing the same
+    // (current, needed) pair is suppressed so a refused resize can't spin.
+    fn request_height(&mut self, needed: usize, current: usize) {
+        if needed == current {
+            self.last_resize = None;
+            return;
+        }
+        if self.last_resize == Some((current, needed)) {
+            return;
+        }
+        let Some(pane_id) = self.own_pane_id else {
+            return;
+        };
+        let resize = if needed > current {
+            Resize::Increase
+        } else {
+            Resize::Decrease
+        };
+        eprintln!("auto-height: rows={current} needed={needed} -> {resize:?} Down");
+        resize_pane_with_id(ResizeStrategy::new(resize, Some(Direction::Down)), pane_id);
+        self.last_resize = Some((current, needed));
+    }
+
     // Map a pane-relative mouse click to a 0-based tab position, if any.
     fn tab_at(&self, line: isize, col: usize) -> Option<usize> {
         if line < 0 {
@@ -275,6 +314,21 @@ impl State {
         }
         None
     }
+}
+
+// How many rows the tabs would occupy at `cols` wide with no row limit.
+// Mirrors the wrap rule in `layout_rows`.
+fn rows_needed(parts: &[LinePart], prefix_width: usize, cols: usize) -> usize {
+    let mut rows = 1usize;
+    let mut cur_width = prefix_width;
+    for part in parts {
+        if cur_width + part.len > cols && cur_width > 0 {
+            rows += 1;
+            cur_width = 0;
+        }
+        cur_width += part.len;
+    }
+    rows
 }
 
 fn background_fill(color: &PaletteColor) -> String {
