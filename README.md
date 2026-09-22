@@ -15,7 +15,10 @@ identical), but replaces the single-line layout with a multi-row packer.
 - **Overflow marker** — if tabs exceed the rows available, the last row ends with
   `+N …`; click it to jump to the first hidden tab.
 - **Theme-aware** — uses your zellij theme's ribbon/text colors.
-- Active-tab highlight, alternate-tab shading, fullscreen/sync/bell indicators.
+- **Row shading** — tabs are shaded by the row they land on, so stacked rows stay
+  visually distinct instead of fusing into one block. Without arrow fonts this
+  becomes a checkerboard, so tabs stay separated along the row too.
+- Active-tab highlight, fullscreen/sync/bell indicators.
 
 ## Build
 
@@ -26,6 +29,75 @@ cargo build --release --target wasm32-wasip1
 ```
 
 `./install.sh` builds and copies the wasm into `~/.config/zellij/plugins/`.
+
+## Nix
+
+```bash
+nix build github:brubsby/zellij-multi-row-tab-bar
+# -> result/share/zellij/plugins/multi-row-tab-bar.wasm
+```
+
+As a flake input, with the overlay:
+
+```nix
+{
+  inputs.zellij-multi-row-tab-bar.url = "github:brubsby/zellij-multi-row-tab-bar";
+
+  # ...
+  nixpkgs.overlays = [ inputs.zellij-multi-row-tab-bar.overlays.default ];
+}
+```
+
+Then wire it up in home-manager. Point the layout at a **stable path** that is
+symlinked into the store, rather than at the store path directly — see the
+warning below:
+
+```nix
+home.file.".config/zellij/plugins/multi-row-tab-bar.wasm".source =
+  "${pkgs.zellij-multi-row-tab-bar}/share/zellij/plugins/multi-row-tab-bar.wasm";
+
+programs.zellij.settings.default_layout = "multi-row";
+
+xdg.configFile."zellij/layouts/multi-row.kdl".text = ''
+  layout {
+      pane size=2 borderless=true {
+          plugin location="file:${config.home.homeDirectory}/.config/zellij/plugins/multi-row-tab-bar.wasm" {
+              hide_session_name false
+          }
+      }
+      pane
+      pane size=2 borderless=true {
+          plugin location="zellij:status-bar"
+      }
+  }
+'';
+```
+
+> **The permission grant is keyed by the plugin's path.** If the layout points
+> straight at a `/nix/store/...` path, that key changes on every rebuild and the
+> bar silently stops working until a new grant is added — and the prompt that
+> would ask for one can't be answered (see *Granting permissions*). Referencing a
+> stable path under `~/.config` keeps one permanent entry in `permissions.kdl`.
+
+### Why fenix
+
+The flake pulls a toolchain from [fenix](https://github.com/nix-community/fenix)
+rather than using `pkgs.rustPlatform`. Two nixpkgs facts force this:
+
+- **`pkgs.rustc` has no `wasm32-wasip1` std.** It ships `wasm32-unknown-unknown`
+  and `wasm32v1-none` only, so an ordinary `buildRustPackage` cannot build a
+  zellij plugin at all.
+- **`pkgsCross.wasi32` names the right target but mis-wires the linker.** Its
+  `rust.rustcTarget` really is `wasm32-wasip1`, but it points the linker at a
+  clang wrapper while rustc drives it with `wasm-ld` flags, so the link dies on
+  `clang: error: unknown argument: '-flavor'`. Setting
+  `CARGO_TARGET_WASM32_WASIP1_LINKER` does not help — the variable reaches the
+  derivation and is overridden anyway.
+
+Two smaller wrinkles the derivation handles: `pkg-config` and `openssl` are
+needed because crates in `zellij-utils`' tree run host build scripts, and the
+build phase calls `cargo` directly because `buildRustPackage`'s hook targets the
+host unless it is a cross build.
 
 ## Use
 
