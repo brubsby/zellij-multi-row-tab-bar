@@ -61,10 +61,10 @@ pub fn render_tab(
 
     let separator_fill_color = palette.text_unselected.background;
     let left_separator = style!(separator_fill_color, background_color).paint(separator);
-    let mut tab_text_len = text.width() + (separator_width * 2) + 2; // +2 for padding
+    let mut tab_text_len = text.width() + (separator_width * 2) + 1; // +1 for padding
     let tab_styled_text = style!(foreground_color, background_color)
         .bold()
-        .paint(format!(" {} ", text));
+        .paint(format!(" {}", text));
 
     let right_separator = style!(background_color, separator_fill_color).paint(separator);
     let tab_styled_text = if !focused_clients.is_empty() {
@@ -141,9 +141,9 @@ pub fn more_message(
     tab_index: usize,
 ) -> LinePart {
     let more_text = if hidden_count < 10000 {
-        format!(" +{} … ", hidden_count)
+        format!(" +{} …", hidden_count)
     } else {
-        " +many … ".to_string()
+        " +many …".to_string()
     };
     let more_text_len = more_text.width() + 2 * separator.width();
     let text_color = palette.ribbon_unselected.base;
