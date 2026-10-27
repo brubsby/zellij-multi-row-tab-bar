@@ -36,6 +36,10 @@ struct State {
     // tab currently under the cursor. Indexed by row (pane-relative line).
     click_map: Vec<Vec<ClickRegion>>,
     hide_session_name: bool,
+    // The stable id of the tab this instance lives in, learned once from the
+    // first PaneUpdate (then unsubscribed). See `render` for why it matters.
+    own_tab_id: Option<usize>,
+    own_tab_position: Option<usize>,
 }
 
 register_plugin!(State);
@@ -57,6 +61,7 @@ impl ZellijPlugin for State {
             EventType::ModeUpdate,
             EventType::Mouse,
             EventType::PermissionRequestResult,
+            EventType::PaneUpdate,
         ]);
     }
 
@@ -78,6 +83,7 @@ impl ZellijPlugin for State {
                     }
                     self.active_tab_idx = active_tab_idx;
                     self.tabs = tabs;
+                    self.resolve_own_tab();
                 } else {
                     eprintln!("Could not find active tab.");
                 }
@@ -99,6 +105,15 @@ impl ZellijPlugin for State {
                 },
                 _ => {},
             },
+            Event::PaneUpdate(manifest) => {
+                let me = get_plugin_ids().plugin_id;
+                self.own_tab_position = manifest
+                    .panes
+                    .iter()
+                    .find(|(_, panes)| panes.iter().any(|p| p.is_plugin && p.id == me))
+                    .map(|(pos, _)| *pos);
+                self.resolve_own_tab();
+            },
             Event::PermissionRequestResult(_) => {
                 // Re-render once the user accepts so the bar appears immediately.
                 should_render = true;
@@ -116,6 +131,20 @@ impl ZellijPlugin for State {
         if self.tabs.is_empty() || rows == 0 || cols == 0 {
             return;
         }
+        // A background instance draws the bar as it will look once its own tab
+        // is active, so switching tabs shows a correct bar immediately rather
+        // than waiting for this instance's turn to process the TabUpdate.
+        let tabs: Vec<TabInfo> = match self.own_tab_id {
+            Some(id) => self
+                .tabs
+                .iter()
+                .map(|t| TabInfo {
+                    active: t.tab_id == id,
+                    ..t.clone()
+                })
+                .collect(),
+            None => self.tabs.clone(),
+        };
         let palette = self.mode_info.style.colors;
         let capabilities = self.mode_info.capabilities;
         let background = palette.text_unselected.background;
@@ -124,8 +153,7 @@ impl ZellijPlugin for State {
         // don't fuse into one block. Which row a tab lands on isn't known until
         // it's packed, and shading doesn't affect width, so: measure, assign
         // rows, then style for real.
-        let measured: Vec<LinePart> = self
-            .tabs
+        let measured: Vec<LinePart> = tabs
             .iter()
             .map(|t| tab_style(self.tab_name(t), t, false, palette, capabilities))
             .collect();
@@ -138,8 +166,7 @@ impl ZellijPlugin for State {
         // fall back to a checkerboard that alternates along the row as well.
         let arrow_fonts_available = !capabilities.arrow_fonts;
 
-        let parts: Vec<LinePart> = self
-            .tabs
+        let parts: Vec<LinePart> = tabs
             .iter()
             .enumerate()
             .map(|(i, t)| {
@@ -172,6 +199,17 @@ impl ZellijPlugin for State {
 }
 
 impl State {
+    fn resolve_own_tab(&mut self) {
+        if self.own_tab_id.is_some() {
+            return;
+        }
+        let Some(pos) = self.own_tab_position else { return };
+        if let Some(tab) = self.tabs.iter().find(|t| t.position == pos) {
+            self.own_tab_id = Some(tab.tab_id);
+            unsubscribe(&[EventType::PaneUpdate]);
+        }
+    }
+
     // The label for a tab, including the placeholder shown while renaming.
     fn tab_name(&self, t: &TabInfo) -> String {
         let name = t.name.clone();
